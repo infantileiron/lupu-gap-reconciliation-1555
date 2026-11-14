@@ -3,6 +3,7 @@ from src.utils import repository as repo
 from src.utils.identity import now
 from src.utils.security import hash_password
 from src.services.statistics import analyze
+from src.services.conservation import run_conservation
 
 def demo_rows():
  rng=random.Random(2309);rows=[]
@@ -24,4 +25,30 @@ def seed():
  repo.put('runs',{'id':'run-demo','study_id':'study-local-level','status':'completed','result':analyze(rows,mask,study),'error':'','created_at':now()},insert_only=True)
  repo.put('reviews',{'id':'review-demo','run_id':'run-demo','comment':'RTS仅作离线重建；共用内点MAE与P+R观测覆盖已分开核验，原始观测不覆盖。','status':'approved','reviewer':'admin@lupu.test','created_at':now()},insert_only=True)
  repo.put('reports',{'id':'report-demo','run_id':'run-demo','review_id':'review-demo','title':'芦浦测站缺口与遮挡验证复核册','created_at':now()},insert_only=True)
- return {t:len(repo.all_rows(t)) for t in ('users','datasets','masks','studies','runs','reviews','reports')}
+ _seed_conservation(rows)
+ return {t:len(repo.all_rows(t)) for t in ('users','datasets','masks','studies','runs','reviews','reports','conservation_reviews')}
+
+def _seed_conservation(rows):
+ if any(r['id']=='cons-demo' for r in repo.all_rows('conservation_reviews')):return
+ weights_csv='station,weight\nLP-01,1.0\nLP-02,1.0\nLP-03,1.0\n'
+ run=repo.get('runs','run-demo')
+ rts={}
+ for station in ('LP-01','LP-02','LP-03'):
+  study=repo.get('studies',run['study_id'])
+  st=[r for r in rows if r['station']==station]
+  times=[r['time_hour'] for r in st];values=[r['value'] for r in st]
+  from src.services.reconstruction import reconstruct
+  series=reconstruct(times,values,study)['series']
+  rts[station]={p['time_hour']:p['rts_mean'] for p in series}
+ lines=['time_hour,region_mean,region_variance']
+ for t in (60.,62.,64.):
+  mean=sum(rts[s][t] for s in ('LP-01','LP-02','LP-03'))/3.0
+  lines.append(f'{t:g},{mean:.6f},')
+ for t in (331.,333.):
+  mean=sum(rts[s][t] for s in ('LP-01','LP-02','LP-03'))/3.0
+  lines.append(f'{t:g},{mean:.6f},0.25')
+ lines.append('12.5,9.0,0.25')
+ lines.append('105.,10.8,')
+ regions_csv='\n'.join(lines)+'\n'
+ repo.put('conservation_reviews',{'id':'cons-demo','name':'三站区域加权守恒复核','run_id':'run-demo','weights_csv':weights_csv,'regions_csv':regions_csv,'status':'queued','result':{},'error':'','created_at':now()},insert_only=True)
+ run_conservation('cons-demo')

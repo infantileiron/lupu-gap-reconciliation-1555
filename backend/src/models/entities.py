@@ -50,4 +50,16 @@ class Report:
  run_id:str
  review_id:str
  title:str
+ conservation_id:str|None=None
+ created_at:str=''
+@dataclass
+class ConservationReview:
+ id:str
+ name:str
+ run_id:str
+ weights_csv:str
+ regions_csv:str
+ status:str='queued'
+ result:dict[str,Any]=field(default_factory=dict)
+ error:str=''
  created_at:str=''

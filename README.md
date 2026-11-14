@@ -6,7 +6,7 @@
 
 上游 `station_gaps_202611.csv` 为3测站、480小时的1440条模拟观测。团队原来跨列手填，长缺口容易过平滑、边缘外推未标、验证时不慎用到被遮挡真值。本工程替代原始核查、遮挡锁定、固定参数重建、误差复核与归档，下游观测组据此安排实际质控讨论。
 
-ObservationDataset原始观测、GapMask连续验证掩码、ReconstructionStudy参数方案、ReconstructionRun运行、GapReview复核、Report报告，全部贯穿存储/API/界面。六页：缺测档案、原始观测、连续遮挡、重建参数、插补与验证、缺口复核。总览和结果共用GapChart与GapSummary。
+ObservationDataset原始观测、GapMask连续验证掩码、ReconstructionStudy参数方案、ReconstructionRun运行、GapReview复核、ConservationReview站群守恒复核、Report报告，全部贯穿存储/API/界面。七页：缺测档案、原始观测、连续遮挡、重建参数、插补与验证、站群守恒、缺口复核。总览和结果共用GapChart与GapSummary。
 
 ## 快速启动
 
@@ -55,6 +55,14 @@ RTS使用未来已观测值，自动初值也可能位于序列起点之后，�
 
 使用分段三次Hermite形状保持插值。内点导数为同号相邻割线的加权调和均值；变号/零割线导数置0，端点采用限制导数。至少2个已知点，仅在最早与最晚已知点之间估计；边缘不外推，无法估计返回null而不是0。只有1个已知点时也不假装能补其他时刻。
 
+## 站群守恒复核
+
+观测组另持区域加权均值，逐站补值常与区域记录对不上。ConservationReview针对一条已完成运行，导入测站权重（station,weight，正权重按时刻归一化）与区域记录（time_hour,region_mean,可选region_variance）。区域方差留空是硬守恒约束（精确满足），填非负方差是按完整相关不确定性加权的软约束。
+
+仅原始缺失值进入未知量，实测值原样保留、不被调整、不出现在调整单元表。先验取每站离线RTS在缺失时刻的**联合矩**：对角是平滑状态方差加观测噪声r，非对角是跨时刻平滑协方差（恒等式P_s(i,j)=(∏C)·P_s(j)，用对数前缀和防长序列下溢），站间块对角。约束GLS正规方程Hx=b（H=Σ⁻¹+G_s′R_s⁻¹G_s），硬约束用Schur补λ=S⁻¹(c−G_h x_soft)在软无约束解上校正；后验协方差H⁻¹−H⁻¹G_h′S⁻¹G_hH⁻¹只减不增，硬约束方向方差塌缩到零。输出每个缺失单元的新95%有噪观测区间、原RTS/PCHIP单站对照与区域逐条残差对账（硬残差为零、软约束给标准化残差z）。
+
+区域时刻必须与每个加权测站的时刻精确匹配，**异步时刻不凑近匹配**，未匹配记录列出但不参与求解。完全重复或线性相关的约束（软、硬均包括）自动消冗且不改变解；相互矛盾的硬约束整次拒绝，Gauss-Jordan消元定位到冲突区域时刻。连续遮挡窗口内、含遮挡真值的区域记录整列隔离，不参与联合调整，遮挡重算与生产结果互不修改。已有复核结果insert-only保留，新提交不改旧结果。
+
 ## 生产与验证分开
 
 生产重建使用全部原始已观测值，输出仅填原始缺口；已有观测的rts_output/pchip_output都原样保留。RTS状态均值是单独字段，不拿平滑值覆盖实测值。
@@ -71,10 +79,10 @@ RTS使用未来已观测值，自动初值也可能位于序列起点之后，�
 |---|---|
 | 前端 | React18 / TypeScript5.7 / Vite6 / Nginx1.28 |
 | 后端 | Python3.12 / FastAPI / psycopg3 |
-| 算法 | Python math/bisect，Kalman/RTS和PCHIP自实现 |
-| 异步与持久化 | Redis7.4 / 独立worker / PostgreSQL16 |
+| 算法 | Python math/bisect，Kalman/RTS（含跨时刻联合矩）和PCHIP自实现，Cholesky/Gauss-Jordan手写 |
+| 异步与持久化 | Redis7.4 / 独立worker（gap-reconstruction与gap-conservation双队列）/ PostgreSQL16 |
 
-78职责源文件。后端src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}，前端src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。TEXT主键+JSON文本业务表，DDL在backend/migrations/001_initial.sql；advisory lock保护首次并发建表。
+后端src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}，前端src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。TEXT主键+JSON文本业务表（含conservation_reviews），DDL在backend/migrations/001_initial.sql；advisory lock保护首次并发建表。守恒复核上限：区域记录500条、权重8行、参与调整缺失单元400个、复核队列10任务。
 
 枚举：后端src/constants/enums.py角色/状态及src/constants/domain.py配额/区间常数；前端src/constants/enums.ts。环境DATABASE_URL、REDIS_URL、JWT_SECRET、SEED_DEMO、TASK_MODE、ARTIFACT_DIR及端口/口令见.env.example。
 

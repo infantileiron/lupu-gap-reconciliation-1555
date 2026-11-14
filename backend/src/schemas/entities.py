@@ -37,3 +37,9 @@ class ReportInput(InputModel):
  run_id:str
  review_id:str
  title:str=Field(min_length=2,max_length=100)
+ conservation_id:str|None=None
+class ConservationInput(InputModel):
+ name:str=Field(min_length=2,max_length=100)
+ run_id:str
+ weights_csv:str=Field(min_length=8,max_length=20000)
+ regions_csv:str=Field(min_length=8,max_length=400000)

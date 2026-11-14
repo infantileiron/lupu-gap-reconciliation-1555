@@ -20,3 +20,34 @@ def kalman_rts(times,values,q,r,initial_variance=10000,initial_level=None):
   # Algebraically equivalent RTS variance, with a nonnegative stable decomposition.
   ps[i]=min(pf[i],max(0.,pf[i]*(1-gain)+gain*gain*ps[i+1]))
  return {'filtered_mean':mf,'filtered_variance':pf,'smoothed_mean':ms,'state_variance':ps,'observation_variance':[p+r for p in ps],'initial_level_used':initial,'initial_variance':initial_variance}
+
+def rts_gap_moments(times,values,q,r,initial_variance=10000,initial_level=None):
+ # 与kalman_rts相同的离线平滑，另返回目标缺失时刻之间的联合（跨时刻）协方差。
+ base=kalman_rts(times,values,q,r,initial_variance,initial_level)
+ n=len(times);pf=base['filtered_variance']
+ log_abs=[0.0]*n;signs=[1]*n
+ for i in range(n-1):
+  c=pf[i]/(pf[i]+q*(times[i+1]-times[i]))
+  if c==0:signs[i]=0
+  elif c<0:signs[i]=-1;log_abs[i]=math.log(-c)
+  else:log_abs[i]=math.log(c)
+ # 对数前缀和，避免长序列上C连乘下溢为0。
+ log_prefix=[0.0]*(n+1);neg_prefix=[0]*(n+1)
+ for i in range(n):
+  neg_prefix[i+1]=neg_prefix[i]+(1 if signs[i]<0 else 0)
+  log_prefix[i+1]=log_prefix[i]+(log_abs[i] if signs[i]!=0 else 0.0)
+ ps=base['state_variance']
+ target=[i for i,v in enumerate(values) if v is None]
+ def lag_cov(i,j):
+  if i==j:return ps[i]
+  lo,hi=(i,j) if i<j else (j,i)
+  if signs[lo]==0 or any(signs[k]==0 for k in range(lo,hi)):return 0.0
+  product_sign=-1 if (neg_prefix[hi]-neg_prefix[lo])%2 else 1
+  # RTS恒等式：P_s(lo,hi)=(∏C_lo..C_hi-1)·P_s(hi)，基准为较晚时刻的平滑方差。
+  return product_sign*math.exp(log_prefix[hi]-log_prefix[lo])*ps[hi]
+ k=len(target);cov=[[0.0]*k for _ in range(k)]
+ for a,i in enumerate(target):
+  for b,j in enumerate(target):
+   if b<a:cov[a][b]=cov[b][a]
+   else:cov[a][b]=lag_cov(i,j)
+ return {'smoothed_mean':base['smoothed_mean'],'state_variance':ps,'observation_variance':base['observation_variance'],'gap_indices':target,'gap_covariance':cov,'initial_level_used':base['initial_level_used']}
